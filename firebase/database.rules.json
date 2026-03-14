@@ -1,0 +1,38 @@
+{
+  "rules": {
+    "chatRooms": {
+      "$roomId": {
+        ".read": "auth != null && (data.child('participants').child('0').val() === auth.uid || data.child('participants').child('1').val() === auth.uid)",
+        ".write": "auth != null",
+        "participants": {
+          ".read": "auth != null"
+        },
+        "participantNames": {
+          ".read": "auth != null"
+        },
+        "participantAvatars": {
+          ".read": "auth != null"
+        },
+        "lastMessage": {
+          ".read": "auth != null",
+          ".write": "auth != null"
+        },
+        "lastMessageTime": {
+          ".read": "auth != null",
+          ".write": "auth != null"
+        }
+      },
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "messages": {
+      "$roomId": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        "$messageId": {
+          ".validate": "newData.hasChildren(['senderId', 'senderName', 'text', 'timestamp'])"
+        }
+      }
+    }
+  }
+}

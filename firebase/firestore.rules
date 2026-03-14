@@ -1,0 +1,77 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper: Check if user is authenticated
+    function isAuth() {
+      return request.auth != null;
+    }
+    
+    // Helper: Check if user is the owner
+    function isOwner(uid) {
+      return isAuth() && request.auth.uid == uid;
+    }
+
+    // ==================== USERS ====================
+    match /users/{userId} {
+      // Anyone authenticated can read public profiles
+      allow read: if isAuth();
+      // Only the user can create/update their own profile
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId);
+      allow delete: if false; // Users can't delete accounts directly
+    }
+
+    // ==================== PRODUCTS ====================
+    match /products/{productId} {
+      // Anyone authenticated can read products
+      allow read: if isAuth();
+      // Only authenticated users can create products
+      allow create: if isAuth() && request.resource.data.sellerId == request.auth.uid;
+      // Only the seller can update their products
+      allow update: if isAuth() && resource.data.sellerId == request.auth.uid;
+      // Only the seller can delete their products
+      allow delete: if isAuth() && resource.data.sellerId == request.auth.uid;
+    }
+
+    // ==================== ORDERS ====================
+    match /orders/{orderId} {
+      // Buyer and seller can read the order
+      allow read: if isAuth() && (
+        resource.data.buyerId == request.auth.uid || 
+        resource.data.sellerId == request.auth.uid
+      );
+      // Orders are created by the API route (admin SDK), not client
+      // But allow read for buyer/seller
+      allow create: if false; // Created server-side only
+      allow update: if isAuth() && (
+        resource.data.buyerId == request.auth.uid || 
+        resource.data.sellerId == request.auth.uid
+      );
+      allow delete: if false;
+    }
+
+    // ==================== REPORTS ====================
+    match /reports/{reportId} {
+      allow read: if isAuth() && resource.data.reporterId == request.auth.uid;
+      allow create: if false; // Created server-side
+      allow update, delete: if false;
+    }
+
+    // ==================== SUBSCRIPTIONS ====================
+    match /subscriptions/{subId} {
+      allow read: if isAuth();
+      allow create: if isAuth() && request.resource.data.subscriberId == request.auth.uid;
+      allow delete: if isAuth() && resource.data.subscriberId == request.auth.uid;
+      allow update: if false;
+    }
+
+    // ==================== NOTIFICATIONS ====================
+    match /notifications/{notifId} {
+      allow read: if isAuth() && resource.data.userId == request.auth.uid;
+      allow update: if isAuth() && resource.data.userId == request.auth.uid;
+      allow create: if false; // Created server-side
+      allow delete: if isAuth() && resource.data.userId == request.auth.uid;
+    }
+  }
+}
