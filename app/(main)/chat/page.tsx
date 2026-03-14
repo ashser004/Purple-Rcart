@@ -5,13 +5,15 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useAuthStore } from "@/lib/store/authStore";
 import {
   queryDocuments,
+  getDocument,
   addDocument,
   updateDocument,
   subscribeToCollection,
   where,
   orderBy,
+  serverTimestamp,
 } from "@/lib/firebase/db";
-import { Chat, Message, CURRENCY_SYMBOL } from "@/types";
+import { Chat, Message, UserProfile, CURRENCY_SYMBOL } from "@/types";
 import { ArrowLeft, Send, Plus, MapPin, Camera, DollarSign, MoreHorizontal } from "lucide-react";
 
 export default function ChatPageWrapper() {
@@ -31,6 +33,8 @@ function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [otherUserName, setOtherUserName] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Fetch user's chats
@@ -58,9 +62,39 @@ function ChatPage() {
     }
   }, [searchParams, chats]);
 
-  // Subscribe to messages when a chat is active
+  // Fetch other participant's name when activeChat changes
   useEffect(() => {
-    if (!activeChat) return;
+    if (!activeChat || !user) {
+      setOtherUserName("");
+      return;
+    }
+
+    const otherUid = activeChat.participants.find((p) => p !== user.uid);
+    if (!otherUid) {
+      setOtherUserName("Chat");
+      return;
+    }
+
+    getDocument<UserProfile>("users", otherUid)
+      .then((userProfile) => {
+        setOtherUserName(userProfile?.name || "User");
+      })
+      .catch(() => {
+        setOtherUserName("User");
+      });
+  }, [activeChat, user]);
+
+  // Subscribe to messages when a chat is active + reset unread count
+  useEffect(() => {
+    if (!activeChat || !user) return;
+
+    // Reset current user's unread count when opening the chat
+    const currentUnread = activeChat.unreadCount?.[user.uid] || 0;
+    if (currentUnread > 0) {
+      updateDocument("chats", activeChat.id, {
+        [`unreadCount.${user.uid}`]: 0,
+      }).catch((err) => console.error("Failed to reset unread count:", err));
+    }
 
     const unsub = subscribeToCollection(
       "messages",
@@ -72,24 +106,59 @@ function ChatPage() {
     );
 
     return () => unsub();
-  }, [activeChat]);
+  }, [activeChat, user]);
 
   async function handleSend() {
-    if (!newMessage.trim() || !activeChat || !user) return;
+    if (!newMessage.trim() || !activeChat || !user || sending) return;
 
     const messageText = newMessage.trim();
     setNewMessage("");
+    setSending(true);
 
-    await addDocument("messages", {
+    // Optimistic message for instant display
+    const optimisticMsg: Message = {
+      id: `temp-${Date.now()}`,
       chatId: activeChat.id,
       senderId: user.uid,
       message: messageText,
-    });
+      timestamp: { toDate: () => new Date() } as any,
+    };
+    setMessages((prev) => [...prev, optimisticMsg]);
+    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
 
-    await updateDocument("chats", activeChat.id, {
-      lastMessage: messageText,
-      lastUpdated: new Date(),
-    });
+    try {
+      // Determine the other participant for unread count
+      const otherUid = activeChat.participants.find((p) => p !== user.uid);
+
+      await addDocument("messages", {
+        chatId: activeChat.id,
+        senderId: user.uid,
+        message: messageText,
+        timestamp: serverTimestamp(),
+      });
+
+      // Build update object for chat metadata
+      const chatUpdate: Record<string, any> = {
+        lastMessage: messageText,
+        lastUpdated: serverTimestamp(),
+      };
+
+      // Increment the other user's unread count
+      if (otherUid) {
+        const currentChat = chats.find((c) => c.id === activeChat.id);
+        const currentUnread = currentChat?.unreadCount?.[otherUid] || 0;
+        chatUpdate[`unreadCount.${otherUid}`] = currentUnread + 1;
+      }
+
+      await updateDocument("chats", activeChat.id, chatUpdate);
+    } catch (err: any) {
+      console.error("Failed to send message:", err);
+      // Remove optimistic message on failure and restore input
+      setMessages((prev) => prev.filter((m) => m.id !== optimisticMsg.id));
+      setNewMessage(messageText);
+    } finally {
+      setSending(false);
+    }
   }
 
   function handleKeyPress(e: React.KeyboardEvent) {
@@ -113,7 +182,7 @@ function ChatPage() {
 
   // Chat Detail View
   if (activeChat) {
-    const otherName = activeChat.itemTitle || "Chat";
+    const displayName = otherUserName || activeChat.itemTitle || "Chat";
 
     return (
       <div
@@ -143,12 +212,12 @@ function ChatPage() {
             fontWeight: 700,
             fontSize: 18,
           }}>
-            {otherName.charAt(0).toUpperCase()}
+            {displayName.charAt(0).toUpperCase()}
           </div>
           <div style={{ flex: 1 }}>
-            <div className="chat-name">{otherName}</div>
+            <div className="chat-name">{displayName}</div>
             <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-              Usually replies within 1 hour
+              {activeChat.itemTitle ? `Re: ${activeChat.itemTitle}` : "Usually replies within 1 hour"}
             </div>
           </div>
           <button className="btn-ghost" style={{ padding: 6 }}>
@@ -182,7 +251,7 @@ function ChatPage() {
                 <div className={`message-bubble ${isSent ? "message-sent" : "message-received"}`}>
                   {msg.message}
                 </div>
-                <div className={`message-time ${isSent ? "message-time-sent" : ""}`}
+                <div className="message-time"
                   style={{ textAlign: isSent ? "right" : "left", paddingLeft: isSent ? 0 : 8, paddingRight: isSent ? 8 : 0 }}>
                   {formatTime(msg.timestamp)}
                 </div>
@@ -222,8 +291,9 @@ function ChatPage() {
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             onKeyDown={handleKeyPress}
+            disabled={sending}
           />
-          <button className="chat-send-btn" onClick={handleSend}>
+          <button className="chat-send-btn" onClick={handleSend} disabled={sending} style={{ opacity: sending ? 0.6 : 1 }}>
             <Send size={18} />
           </button>
         </div>

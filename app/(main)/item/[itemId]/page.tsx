@@ -6,7 +6,7 @@ import { useAuthStore } from "@/lib/store/authStore";
 import { getDocument, addDocument, updateDocument, queryDocuments, where } from "@/lib/firebase/db";
 import { getUserLocation, calculateDistance, formatDistance } from "@/lib/utils/location";
 import { useToast } from "@/components/shared/Toast";
-import { Item, CURRENCY_SYMBOL } from "@/types";
+import { Item, Reservation, CURRENCY_SYMBOL } from "@/types";
 import { ArrowLeft, Heart, Share2, MapPin, MessageCircle, ShoppingCart, Flag, Star, Truck, Tag, Clock } from "lucide-react";
 
 export default function ItemDetailPage() {
@@ -43,13 +43,32 @@ export default function ItemDetailPage() {
     if (item.sellerId === user.uid) { showToast("You can't reserve your own item", "warning"); return; }
     if (item.status !== "available") { showToast("This item is not available", "warning"); return; }
 
-    const advanceCost = Math.ceil(item.price * 0.05);
+    const advanceCost = Math.round(item.price * 0.05);
     if ((profile.credits ?? 0) < advanceCost) {
       showToast("Insufficient credits", "error"); return;
     }
 
     setReserving(true);
     try {
+      // Re-fetch item to check the latest status (prevents race conditions)
+      const freshItem = await getDocument<Item>("items", item.id);
+      if (!freshItem || freshItem.status !== "available") {
+        showToast("This item is no longer available", "warning");
+        if (freshItem) setItem(freshItem);
+        return;
+      }
+
+      // Check for existing active reservation on this item
+      const existingReservations = await queryDocuments<Reservation>("reservations", [
+        where("itemId", "==", item.id),
+        where("status", "==", "reserved"),
+      ]);
+      if (existingReservations.length > 0) {
+        showToast("This item is already reserved", "warning");
+        setItem({ ...item, status: "reserved" });
+        return;
+      }
+
       await addDocument("reservations", {
         itemId: item.id, buyerId: user.uid, sellerId: item.sellerId,
         advancePaid: advanceCost, status: "reserved",
@@ -60,6 +79,7 @@ export default function ItemDetailPage() {
       setItem({ ...item, status: "reserved" });
       showToast(`Reserved! ${advanceCost} credits deducted`, "success");
     } catch (err: any) {
+      console.error("Reservation failed:", err);
       showToast(err.message || "Failed to reserve", "error");
     } finally { setReserving(false); }
   }
@@ -67,28 +87,38 @@ export default function ItemDetailPage() {
   async function handleChat() {
     if (!user || !item) return;
     const participants = [user.uid, item.sellerId].sort();
-    const existing = await queryDocuments("chats", [
-      where("participants", "==", participants), where("itemId", "==", item.id),
-    ]);
-    if (existing.length > 0) {
-      router.push(`/chat?id=${(existing[0] as any).id}`);
-    } else {
-      const chatId = await addDocument("chats", {
-        participants, itemId: item.id, itemTitle: item.title,
-        itemImage: item.images?.[0] || "", itemPrice: item.price,
-        lastMessage: "", lastUpdated: new Date(), unreadCount: {},
-      });
-      router.push(`/chat?id=${chatId}`);
+    try {
+      const existing = await queryDocuments("chats", [
+        where("participants", "==", participants), where("itemId", "==", item.id),
+      ]);
+      if (existing.length > 0) {
+        router.push(`/chat?id=${(existing[0] as any).id}`);
+      } else {
+        const chatId = await addDocument("chats", {
+          participants, itemId: item.id, itemTitle: item.title,
+          itemImage: item.images?.[0] || "", itemPrice: item.price,
+          lastMessage: "", lastUpdated: new Date(), unreadCount: {},
+        });
+        router.push(`/chat?id=${chatId}`);
+      }
+    } catch (err: any) {
+      console.error("Failed to open chat:", err);
+      showToast("Failed to open chat", "error");
     }
   }
 
   async function handleReport() {
     if (!user || !item || !reportReason.trim()) return;
-    await addDocument("reports", {
-      reporterId: user.uid, itemId: item.id, sellerId: item.sellerId, reason: reportReason.trim(),
-    });
-    setShowReport(false); setReportReason("");
-    showToast("Report submitted", "success");
+    try {
+      await addDocument("reports", {
+        reporterId: user.uid, itemId: item.id, sellerId: item.sellerId, reason: reportReason.trim(),
+      });
+      setShowReport(false); setReportReason("");
+      showToast("Report submitted", "success");
+    } catch (err: any) {
+      console.error("Failed to submit report:", err);
+      showToast("Failed to submit report", "error");
+    }
   }
 
   if (loading) return <div className="loading-screen"><div className="spinner" /></div>;
@@ -149,7 +179,7 @@ export default function ItemDetailPage() {
         <div className="flex gap-2 mb-3">
           <button className="btn btn-outline" style={{ flex: 1 }} onClick={handleChat}><MessageCircle size={18} /> Chat</button>
           <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleReserve} disabled={reserving || item.status !== "available"}>
-            <ShoppingCart size={18} /> {reserving ? "Reserving..." : item.status === "available" ? `Reserve (${Math.ceil(item.price * 0.05)} cr)` : item.status}
+            <ShoppingCart size={18} /> {reserving ? "Reserving..." : item.status === "available" ? `Reserve (${Math.round(item.price * 0.05)} cr)` : item.status}
           </button>
         </div>
       )}
