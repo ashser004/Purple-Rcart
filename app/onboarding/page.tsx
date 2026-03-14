@@ -79,9 +79,9 @@ export default function OnboardingPage() {
           address: address,
         },
         isSeller: wantsSeller,
-        storeName: wantsSeller ? storeName : undefined,
-        storeDescription: wantsSeller ? storeDescription : undefined,
-        storeLocation: wantsSeller && location ? { lat: location.lat, lng: location.lng, address } : undefined,
+        ...(wantsSeller && storeName ? { storeName } : {}),
+        ...(wantsSeller && storeDescription ? { storeDescription } : {}),
+        ...(wantsSeller && location ? { storeLocation: { lat: location.lat, lng: location.lng, address } } : {}),
       });
 
       await refreshProfile();

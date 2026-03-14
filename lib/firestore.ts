@@ -93,7 +93,7 @@ export async function deleteProduct(id: string): Promise<void> {
 }
 
 export async function getProductsBySeller(sellerId: string): Promise<Product[]> {
-  const q = query(collection(db, 'products'), where('sellerId', '==', sellerId), orderBy('createdAt', 'desc'));
+  const q = query(collection(db, 'products'), where('sellerId', '==', sellerId));
   const snap = await getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() } as Product));
 }
@@ -102,7 +102,6 @@ export async function getAllAvailableProducts(): Promise<Product[]> {
   const q = query(
     collection(db, 'products'),
     where('status', '==', 'available'),
-    orderBy('createdAt', 'desc'),
     limit(100)
   );
   const snap = await getDocs(q);
@@ -145,13 +144,13 @@ export async function updateOrder(id: string, data: Partial<Order>): Promise<voi
 }
 
 export async function getOrdersByBuyer(buyerId: string): Promise<Order[]> {
-  const q = query(collection(db, 'orders'), where('buyerId', '==', buyerId), orderBy('createdAt', 'desc'));
+  const q = query(collection(db, 'orders'), where('buyerId', '==', buyerId));
   const snap = await getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() } as Order));
 }
 
 export async function getOrdersBySeller(sellerId: string): Promise<Order[]> {
-  const q = query(collection(db, 'orders'), where('sellerId', '==', sellerId), orderBy('createdAt', 'desc'));
+  const q = query(collection(db, 'orders'), where('sellerId', '==', sellerId));
   const snap = await getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() } as Order));
 }
@@ -227,7 +226,6 @@ export async function getNotifications(userId: string): Promise<AppNotification[
   const q = query(
     collection(db, 'notifications'),
     where('userId', '==', userId),
-    orderBy('createdAt', 'desc'),
     limit(50)
   );
   const snap = await getDocs(q);
